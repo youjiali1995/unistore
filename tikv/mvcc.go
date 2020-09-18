@@ -370,9 +370,9 @@ func (store *MVCCStore) TxnHeartBeat(reqCtx *requestCtx, req *kvrpcpb.TxnHeartBe
 
 // TxnStatus is the result of `CheckTxnStatus` API.
 type TxnStatus struct {
-	commitTS    uint64
-	action      kvrpcpb.Action
-	lockInfo    *kvrpcpb.LockInfo
+	commitTS uint64
+	action   kvrpcpb.Action
+	lockInfo *kvrpcpb.LockInfo
 }
 
 func (store *MVCCStore) CheckTxnStatus(reqCtx *requestCtx,
@@ -858,6 +858,37 @@ func (store *MVCCStore) Commit(req *requestCtx, keys [][]byte, startTS, commitTS
 		store.DeadlockDetectCli.CleanUp(startTS)
 	}
 	return err
+}
+
+func (store *MVCCStore) Write(reqCtx *requestCtx, mutations []*kvrpcpb.Mutation, version uint64) error {
+	store.updateLatestTS(version)
+	batch := store.dbWriter.NewWriteBatch(version, version, reqCtx.rpcCtx)
+
+	var err error
+	var tmpDiff int
+	for _, m := range mutations {
+		if m.Op != kvrpcpb.Op_Del && m.Op != kvrpcpb.Op_Put {
+			return errors.New("unsupported operation")
+		}
+		if rowcodec.IsRowKey(m.Key) && m.Op == kvrpcpb.Op_Put {
+			if rowcodec.IsNewFormat(m.Value) {
+				reqCtx.buf = m.Value
+			} else {
+				reqCtx.buf, err = encodeFromOldRow(m.Value, reqCtx.buf)
+				if err != nil {
+					log.Error("encode data failed", zap.Binary("value", m.Value), zap.Binary("key", m.Key), zap.Stringer("op", m.Op), zap.Error(err))
+					return err
+				}
+			}
+			m.Value = reqCtx.buf
+		} else if m.Op == kvrpcpb.Op_Del {
+			m.Value = nil
+		}
+		tmpDiff += len(m.Key) + len(m.Value)
+		batch.Write(m.Op, m.Key, m.Value)
+	}
+	atomic.AddInt64(&reqCtx.regCtx.diff, int64(tmpDiff))
+	return store.dbWriter.Write(batch)
 }
 
 func (store *MVCCStore) handleLockNotFound(reqCtx *requestCtx, key []byte, startTS, commitTS uint64) error {

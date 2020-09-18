@@ -905,6 +905,8 @@ func (a *applier) execWriteCmd(aCtx *applyContext, rlog raftlog.RaftLog) (
 			a.execPrewrite(aCtx, *x)
 		case *commitOp:
 			a.execCommit(aCtx, *x)
+		case *writeOp:
+			a.execWrite(aCtx, *x)
 		case *rollbackOp:
 			a.execRollback(aCtx, *x)
 		case *raft_cmdpb.DeleteRangeRequest:
@@ -946,6 +948,11 @@ func (a *applier) execCustomLog(actx *applyContext, cl *raftlog.CustomRaftLog) (
 			a.commitLock(actx, key, val, commitTS)
 			cnt++
 		})
+	case raftlog.TypeWrite:
+		cl.IterateWrite(func(key, val []byte, commitTS uint64) {
+			a.commitWrite(actx, key, val, commitTS)
+			cnt++
+		})
 	case raftlog.TypeRolback:
 		cl.IterateRollback(func(key []byte, startTS uint64, deleteLock bool) {
 			actx.wb.Rollback(y.KeyWithTs(key, startTS))
@@ -969,6 +976,10 @@ func (a *applier) execCustomLog(actx *applyContext, cl *raftlog.CustomRaftLog) (
 type commitOp struct {
 	putWrite *raft_cmdpb.PutRequest
 	delLock  *raft_cmdpb.DeleteRequest
+}
+
+type writeOp struct {
+	putWrite *raft_cmdpb.PutRequest
 }
 
 // a prewrite may optionally has a put Default.
@@ -1060,14 +1071,20 @@ func createWriteCmdOps(requests []*raft_cmdpb.Request) (ops []interface{}) {
 						})
 					}
 				} else {
-					// Commit must followed by del lock
-					nextDel := requests[i+1].Delete
-					y.Assert(nextDel != nil && nextDel.Cf == CFLock)
-					ops = append(ops, &commitOp{
-						putWrite: put,
-						delLock:  nextDel,
-					})
-					i++
+					if i == len(requests)-1 || requests[i+1].Delete == nil {
+						ops = append(ops, &writeOp{
+							putWrite: put,
+						})
+					} else {
+						// Commit must followed by del lock
+						nextDel := requests[i+1].Delete
+						y.Assert(nextDel != nil && nextDel.Cf == CFLock)
+						ops = append(ops, &commitOp{
+							putWrite: put,
+							delLock:  nextDel,
+						})
+						i++
+					}
 				}
 			}
 		case raft_cmdpb.CmdType_DeleteRange:
@@ -1150,6 +1167,27 @@ func (a *applier) getLock(aCtx *applyContext, rawKey []byte) []byte {
 		}
 	}
 	return nil
+}
+
+func (a *applier) execWrite(aCtx *applyContext, op writeOp) {
+	remain, rawKey, err := codec.DecodeBytes(op.putWrite.Key, nil)
+	if err != nil {
+		panic(op.putWrite.Key)
+	}
+	_, commitTS, err := codec.DecodeUintDesc(remain)
+	if err != nil {
+		panic(remain)
+	}
+	a.commitWrite(aCtx, rawKey, op.putWrite.Value, commitTS)
+}
+
+func (a *applier) commitWrite(aCtx *applyContext, rawKey []byte, val []byte, commitTS uint64) {
+	userMeta := mvcc.NewDBUserMeta(commitTS, commitTS)
+	aCtx.wb.SetWithUserMeta(y.KeyWithTs(rawKey, commitTS), val, userMeta)
+	sizeDiff := uint64(len(rawKey) + len(val))
+	if sizeDiff > 0 {
+		a.metrics.sizeDiffHint += uint64(sizeDiff)
+	}
 }
 
 func (a *applier) execRollback(aCtx *applyContext, op rollbackOp) {

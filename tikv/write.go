@@ -257,6 +257,12 @@ func (wb *writeBatch) Commit(key []byte, lock *mvcc.MvccLock) {
 	wb.lockBatch.delete(key)
 }
 
+func (wb *writeBatch) Write(_ kvrpcpb.Op, key, val []byte) {
+	userMeta := mvcc.NewDBUserMeta(wb.commitTS, wb.commitTS)
+	k := y.KeyWithTs(key, wb.commitTS)
+	wb.dbBatch.set(k, val, userMeta)
+}
+
 func (wb *writeBatch) Rollback(key []byte, deleteLock bool) {
 	rollbackKey := y.KeyWithTs(mvcc.EncodeExtraTxnStatusKey(key, wb.startTS), wb.startTS)
 	userMeta := mvcc.NewDBUserMeta(wb.startTS, 0)

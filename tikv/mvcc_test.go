@@ -408,6 +408,11 @@ func MustCommitErr(key []byte, startTs, commitTs uint64, store *TestStore) {
 	store.c.Assert(err, NotNil)
 }
 
+func MustWrite(op kvrpcpb.Op, key []byte, value []byte, version uint64, store *TestStore) {
+	err := store.MvccStore.Write(store.newReqCtx(), []*kvrpcpb.Mutation{newMutation(op, key, value)}, version)
+	store.c.Assert(err, IsNil)
+}
+
 func MustRollbackKey(key []byte, startTs uint64, store *TestStore) {
 	err := store.MvccStore.Rollback(store.newReqCtx(), [][]byte{key}, startTs)
 	store.c.Assert(err, IsNil)
@@ -1634,4 +1639,17 @@ func (s *testMvccSuite) TestAsyncCommitPrewrite(c *C) {
 	store.c.Assert(secLock.UseAsyncCommit, Equals, true)
 	store.c.Assert(secLock.MinCommitTS, Greater, uint64(0))
 	store.c.Assert(bytes.Compare(secLock.Value, secVal2), Equals, 0)
+}
+
+func (s *testMvccSuite) TestWrite(c *C) {
+	store, err := NewTestStore("TestWrite", "TestWrite", c)
+	c.Assert(err, IsNil)
+	defer CleanTestStore(store)
+
+	key := []byte("key")
+	val := []byte("val")
+	MustWrite(kvrpcpb.Op_Put, key, val, 100, store)
+	MustGetVal(key, val, 101, store)
+	MustWrite(kvrpcpb.Op_Del, key, nil, 101, store)
+	MustGetNone(key, 102, store)
 }

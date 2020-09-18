@@ -462,6 +462,27 @@ func (svr *Server) KvDeleteRange(ctx context.Context, req *kvrpcpb.DeleteRangeRe
 	return &kvrpcpb.DeleteRangeResponse{}, nil
 }
 
+func (svr *Server) KvWrite(ctx context.Context, req *kvrpcpb.WriteRequest) (*kvrpcpb.WriteResponse, error) {
+	reqCtx, err := newRequestCtx(svr, req.Context, "KvDeleteRange")
+	if err != nil {
+		return &kvrpcpb.WriteResponse{Error: err.Error()}, nil
+	}
+	defer reqCtx.finish()
+	if reqCtx.regErr != nil {
+		return &kvrpcpb.WriteResponse{RegionError: reqCtx.regErr}, nil
+	}
+	err = svr.mvccStore.Write(reqCtx, req.Mutations, req.Version)
+	resp := &kvrpcpb.WriteResponse{}
+	if regErr := extractRegionError(err); regErr != nil {
+		resp.RegionError = regErr
+	} else {
+		if err != nil {
+			resp.Error = err.Error()
+		}
+	}
+	return resp, nil
+}
+
 // RawKV commands.
 func (svr *Server) RawGet(context.Context, *kvrpcpb.RawGetRequest) (*kvrpcpb.RawGetResponse, error) {
 	return &kvrpcpb.RawGetResponse{}, nil

@@ -31,6 +31,7 @@ const (
 	TypeRolback             CustomRaftLogType = 3
 	TypePessimisticLock     CustomRaftLogType = 4
 	TypePessimisticRollback CustomRaftLogType = 5
+	TypeWrite               CustomRaftLogType = 6
 )
 
 // CustomRaftLog is the raft log format for unistore to store Prewrite/Commit/PessimisticLock.
@@ -150,6 +151,10 @@ func (rl *CustomRaftLog) IterateCommit(itFunc func(key, val []byte, commitTS uin
 	}
 }
 
+func (rl *CustomRaftLog) IterateWrite(itFunc func(key, val []byte, commitTS uint64)) {
+	rl.IterateCommit(itFunc)
+}
+
 func (rl *CustomRaftLog) IterateRollback(itFunc func(key []byte, startTS uint64, deleteLock bool)) {
 	i := 4 + headerSize
 	for i < len(rl.Data) {
@@ -203,6 +208,10 @@ func (b *CustomBuilder) AppendCommit(key, value []byte, commitTS uint64) {
 	b.data = append(b.data, value...)
 	b.data = append(b.data, u64ToBytes(commitTS)...)
 	b.cnt++
+}
+
+func (b *CustomBuilder) AppendWrite(key, value []byte, commitTS uint64) {
+	b.AppendCommit(key, value, commitTS)
 }
 
 func (b *CustomBuilder) AppendRollback(key []byte, startTS uint64, deleteLock bool) {

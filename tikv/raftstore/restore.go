@@ -87,6 +87,7 @@ func restoreAppliedEntry(entry *eraftpb.Entry, txn *badger.Txn, lockStore *locks
 			restorePrewrite(*x, txn, lockStore)
 		case *commitOp:
 			restoreCommit(*x, lockStore)
+		case *writeOp:
 		case *rollbackOp:
 		case *raft_cmdpb.DeleteRangeRequest:
 		default:

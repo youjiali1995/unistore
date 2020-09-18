@@ -110,6 +110,23 @@ func (wb *raftWriteBatch) Commit(key []byte, lock *mvcc.MvccLock) {
 	wb.requests = append(wb.requests, putWriteReq, delLockReq)
 }
 
+func (wb *raftWriteBatch) Write(op kvrpcpb.Op, key, val []byte) {
+	encodedKey := codec.EncodeBytes(nil, key)
+	writeType := mvcc.WriteTypePut
+	if op == kvrpcpb.Op_Del {
+		writeType = mvcc.WriteTypeDelete
+	}
+	putWriteReq := &rcpb.Request{
+		CmdType: rcpb.CmdType_Put,
+		Put: &rcpb.PutRequest{
+			Cf:    CFWrite,
+			Key:   codec.EncodeUintDesc(encodedKey, wb.commitTS),
+			Value: mvcc.EncodeWriteCFValue(writeType, wb.commitTS, val),
+		},
+	}
+	wb.requests = append(wb.requests, putWriteReq)
+}
+
 func (wb *raftWriteBatch) Rollback(key []byte, deleteLock bool) {
 	encodedKey := codec.EncodeBytes(nil, key)
 	rollBackReq := &rcpb.Request{
@@ -306,6 +323,11 @@ func (wb *customWriteBatch) Prewrite(key []byte, lock *mvcc.MvccLock) {
 func (wb *customWriteBatch) Commit(key []byte, lock *mvcc.MvccLock) {
 	wb.setType(raftlog.TypeCommit)
 	wb.builder.AppendCommit(key, lock.MarshalBinary(), wb.commitTS)
+}
+
+func (wb *customWriteBatch) Write(op kvrpcpb.Op, key, val []byte) {
+	wb.setType(raftlog.TypeWrite)
+	wb.builder.AppendWrite(key, val, wb.commitTS)
 }
 
 func (wb *customWriteBatch) Rollback(key []byte, deleleLock bool) {
